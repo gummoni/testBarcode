@@ -34,10 +34,13 @@ namespace testBarcode
         {
             //参考URL
             // https://www.technical.jp/barcode/handbook1/chapter-6-1.html
+            // http://www.magata.net/memo/index.php?JAN%A5%B3%A1%BC%A5%C9%A4%CE%A5%D0%A1%BC%A5%B3%A1%BC%A5%C9%A4%F2%BA%EE%A4%EB(13%B7%E5JAN)
+            // http://61.89.228.232/reading/barcode/barcode2.html
 
             //解析手順
             //１．バーパターンを{0＝解析不能、1=短いバー、2=長いバー、白黒交互になっている}の組み合わせにする
             //２．パターンテーブルを用いてバーコード情報を文字列化する
+            //TODO: バーコード反転対応
 
 
             //カメラ画像を取り込んでバーコードパターンを取得する
@@ -80,7 +83,7 @@ namespace testBarcode
 
     public class CCD
     {
-        int threshold = 64;     //白黒判定の閾値
+        int threshold = 128;     //白黒判定の閾値
         int paddingSize = 20;   //空白判定の長さ
 
         /// <summary>
@@ -90,7 +93,7 @@ namespace testBarcode
         public IEnumerable<string> Scan()
         {
             //テストデータの用意
-            var bmp = new Bitmap(@"itf.bmp");
+            var bmp = new Bitmap(@"itf2.bmp");
             var data = new byte[bmp.Width, bmp.Height];
             for (var y = 0; y < bmp.Height; y++)
             {
@@ -348,6 +351,111 @@ namespace testBarcode
                         break;
                 }
             }
+        }
+    }
+
+    public class JAN : IBarcodeFormat
+    {
+        public IEnumerable<string> Parse(string pattern)
+        {
+            //0=白, 1=黒
+            var ST_CODE = "111";
+            var CT_CODE = "11111";
+            var ED_CODE = "111";
+
+            //左側7桁はパリティ―パターンに従ったパターンを並べて
+            //右側は偶数パリティのみを使う
+
+            //Mod10Wait3
+            //(1)右から奇数桁の数字を合計して３掛ける
+            //(2)右から偶数桁の数字を合計する
+            //(3)奇数桁(1)と偶数桁(2)の値を合計する
+            //10 - (3) = チェックキャラクタ 
+
+            var parity_pattern = new List<string>()
+            {
+                "000000", //0
+                "001011", //1
+                "001101", //2
+                "001110", //3
+                "010011", //4
+                "011001", //5
+                "011100", //6
+                "010101", //7
+                "010110", //8
+                "011010", //9
+            };
+
+            var check_pattern = new List<string>()
+            {
+                "1110010", //0
+                "1101100", //1
+                "1101100", //2
+                "1000010", //3
+                "1011100", //4
+                "1001110", //5
+                "1010000", //6
+                "1000100", //7
+                "1001000", //8
+                "1110100", //9
+            };
+
+            var bar_pattern = new List<string>()
+            {
+                //odd 0~9
+                "0100111", //0
+                "0110011", //1
+                "0011011", //2
+                "0100001", //3
+                "0011101", //4
+                "0111001", //5
+                "0000101", //6
+                "0010001", //7
+                "0001001", //8
+                "0010111", //9
+                //even 10~19
+                "0001101", //0
+                "0011001", //1
+                "0010011", //2
+                "0111101", //3
+                "0100011", //4
+                "0110001", //5
+                "0101111", //6
+                "0111011", //7
+                "0110111", //8
+                "0001011", //9
+            };
+
+
+            //コード生成
+            //498718571077
+            //Even=481517=26
+            //Odd =978707=38*3=114
+            //114+26=140 = 10 - 0 = 10 mod 10 = 0; == check digit
+
+            var code = "498718571077";
+            var pp = parity_pattern[code[0] - '0'];
+
+            var ret = bar_pattern[pp[0] * 10 + code[1] - '0'] +
+                      bar_pattern[pp[0] * 10 + code[2] - '0'] +
+                      bar_pattern[pp[0] * 10 + code[3] - '0'] +
+                      bar_pattern[pp[0] * 10 + code[4] - '0'] +
+                      bar_pattern[pp[0] * 10 + code[5] - '0'] +
+                      bar_pattern[pp[0] * 10 + code[6] - '0'] +
+                      bar_pattern[10 + code[7] - '0'] +
+                      bar_pattern[10 + code[8] - '0'] +
+                      bar_pattern[10 + code[9] - '0'] +
+                      bar_pattern[10 + code[10] - '0'] +
+                      bar_pattern[10 + code[11] - '0'] +
+                      bar_pattern[10 + code[12] - '0'];
+            //+check digit
+
+
+
+
+
+
+            throw new NotImplementedException();
         }
     }
 
