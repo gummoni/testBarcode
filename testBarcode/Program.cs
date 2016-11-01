@@ -1,10 +1,33 @@
-﻿using System;
+﻿/*
+   MIT License
+
+   Copyright (c) 2016 Kouichi Nishino
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+*/
+using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
+using System.Drawing;
 
 namespace testBarcode
 {
+
     class Program
     {
         static void Main(string[] args)
@@ -17,17 +40,27 @@ namespace testBarcode
             //２．パターンテーブルを用いてバーコード情報を文字列化する
 
 
-            //TODO:カメラ画像を取り込んでバーパターンを取得する
+            //カメラ画像を取り込んでバーコードパターンを取得する
             //１．ライン情報を抜き取り、２値化する。  11119911119999 -> 00001100001111
             //    Y(輝度) = 0.299 x R + 0.587 x G + 0.114 x B　又は Y = (R+G+B)/3
             //２．数値配列に変換する。　00001100001111 -> 4244
-            //３．正規化する。          4244 -> 2122
+            //３．最小に近ければ１、最大に近ければ２にする   4244 -> 2122
 
 
+            //テストバーコードパターンで正しく認識できるかテスト
             var itf = new ITF();
-            foreach (var ret in itf.Parse("00000111112112121121222111121121122112111212112122112112211211000"))
+            foreach (var ret in itf.Parse("0000011111211212112122211112112112211211121211212211211221121100000111112112121121222111121121122112111212112122110000"))
             {
                 Console.WriteLine(ret);
+            }
+
+            //画像からラインバーコードパターンデータを取り出して解析してバーコードが正しく認識できるかテスト
+            foreach (var line in new CCD().Scan())
+            {
+                foreach (var ret in itf.Parse(line))
+                {
+                    Console.WriteLine(ret);
+                }
             }
 
 
@@ -47,62 +80,118 @@ namespace testBarcode
 
     public class CCD
     {
-        const int SpaceCount = 10;
-        //1ラインずつライン情報を返す(白が10ピクセルあったらそこからSTXコードがあるか検索、次の空白エリアまでデータを取る)
-        public IEnumerable<string> ReadLine(byte[][] rgb_data, int width, int height, int threshold)
+        int threshold = 64;     //白黒判定の閾値
+        int paddingSize = 20;   //空白判定の長さ
+
+        /// <summary>
+        /// スキャン
+        /// </summary>
+        /// <returns></returns>
+        public IEnumerable<string> Scan()
         {
+            //テストデータの用意
+            var bmp = new Bitmap(@"itf.bmp");
+            var data = new byte[bmp.Width, bmp.Height];
+            for (var y = 0; y < bmp.Height; y++)
+            {
+                for (var x = 0; x < bmp.Width; x++)
+                {
+                    var col = bmp.GetPixel(x, y);
+                    var val = (byte)((col.R + col.G + col.B) / 3);
+                    data[x, y] = val;
+                }
+            }
+
+            //スキャン結果を返す
+            return ReadLine(data, bmp.Width, bmp.Height);
+        }
+
+
+        //1ラインずつライン情報を返す(白が10ピクセルあったらそこからSTXコードがあるか検索、次の空白エリアまでデータを取る)
+        IEnumerable<string> ReadLine(byte[,] rgb_data, int width, int height)
+        {
+
             for (var y = 0; y < height; y++)
             {
+                var px = 0;
                 var result = new List<int>();
                 var min = width;                            //最小値
-                var bar_val = threshold <= rgb_data[y][0];  //現在の色
+                var max = 0;                                //最大値
+                var bar_val = threshold <= rgb_data[0, y];  //現在の色
                 var bar_count = 1;                          //カウント数
-                var state = 0;
+                var state = 0;                              //未検知でスタート
 
-                for (var x = 1; x < width; x++)
+                for (var x = 0; x < width; x++)
                 {
                     //データ取り込み
-                    var val = threshold <= rgb_data[y][x];
+                    var val = threshold <= rgb_data[x, y];
+
                     if (val == bar_val)
                     {
                         //変化無し
                         bar_count++;
+                        if ((paddingSize <= bar_count) && bar_val && (state == 1))
+                        {
+                            //取込中に白ベタ領域検知
+                            var barcode = "";
+                            foreach (var value in result)
+                            {
+                                // 2値化｛1=短い、2=長い｝
+                                var lo = Math.Abs(value - min);
+                                var hi = Math.Abs(value - max);
+                                barcode += (lo < hi) ? 1 : 2;       //最小値に近い方を１、最大値に近い方を２にする
+                            }
+
+                            string ST_CODE = "1111";
+                            string ED_CODE = "211";
+                            var len = barcode.Length;
+                            var endpos = len - ED_CODE.Length;
+                            if ((barcode.IndexOf(ST_CODE) == 0) && (barcode.LastIndexOf(ED_CODE) == endpos))
+                            {
+                                if (0 == ((len - ST_CODE.Length - ED_CODE.Length) % 10))
+                                {
+                                    //結果を返す
+                                    Console.WriteLine($"x={px}, y={y}: {barcode}");
+                                    yield return barcode + "0";
+                                }
+                            }
+
+                            //取込完了
+                            state = 0;
+                        }
                     }
                     else
                     {
                         //変化あり
-                        if (bar_val && (SpaceCount < bar_count))
+                        if (paddingSize > bar_count)
                         {
-                            state = (state + 1) % 2;    //1=取込開始、0=取込せず
+                            //バーコード？
+                            if (1 == state)
+                            {
+                                //取込中
+                                if (min > bar_count) min = bar_count;
+                                if (max < bar_count) max = bar_count;
+                                result.Add(bar_count);
+                            }
                         }
-                        else if (1 == state)
+                        else if (!bar_val)
                         {
-                            //TODO:取込
-                            //Step1.空白10マス以上見つけた（取込開始、データ取り込みついでにバーの最小の長さもカウント）
-                            //Step2.空白10マス以上見つけた（取込終了、正規化を行い、結果を返す）
+                            //黒のベタ領域は検知エラー
+                            state = 0;
                         }
-
-                        bar_count = 0;
+                        else if (state == 0)
+                        {
+                            //取込開始
+                            state = 1;
+                            min = width;
+                            max = 0;
+                            px = x;
+                            result.Clear();
+                        }
+                        //更新
+                        bar_count = 1;
                         bar_val = val;
                     }
-                }
-
-                //正規化
-                var ret = "";
-                var ng = false;
-                foreach (var str in result)
-                {
-                    var v = (str / min);
-                    ret += v.ToString();
-                    if (9 < v)
-                    {
-                        ng = true;
-                        break;
-                    }
-                }
-                if (!ng)
-                {
-                    yield return ret;
                 }
             }
         }
@@ -220,7 +309,7 @@ namespace testBarcode
             { "1221112211", 98 },
             { "1122112211", 99 },
         };
-        static readonly string ST = "01111";
+        static readonly string ST = "1111";
         static readonly string ED = "2110";
 
         public IEnumerable<string> Parse(string pattern)
